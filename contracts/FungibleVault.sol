@@ -87,32 +87,30 @@ contract FungibleVault is ReentrancyGuard, ERC20 {
         IVault(vault).deposit(address(asset), amount);
 
         // opens a full range order
-        {
-            // convert amount to 18 decimals
-            uint256 amount_18 = _convertTokenDecimals(amount, decimals(), 18);
-            // quote (usd) = amount / 2
-            uint256 quote = amount_18.div(2);
-            // base (position) = (amount - quote) / base TWAP
-            uint32 twapInterval = IClearingHouseConfig(clearingHouseConfig).getTwapInterval();
-            uint256 baseTwap = IIndexPrice(baseToken).getIndexPrice(twapInterval);
-            uint256 base = amount_18.sub(quote).mulDiv(1e18, baseTwap);
+        // convert amount to 18 decimals
+        uint256 amount_18 = _convertTokenDecimals(amount, decimals(), 18);
+        // quote (usd) = amount / 2
+        uint256 quote = amount_18.div(2);
+        // base (position) = (amount - quote) / base TWAP
+        uint32 twapInterval = IClearingHouseConfig(clearingHouseConfig).getTwapInterval();
+        uint256 baseTwap = IIndexPrice(baseToken).getIndexPrice(twapInterval);
+        uint256 base = amount_18.sub(quote).mulDiv(1e18, baseTwap);
 
-            IClearingHouse.AddLiquidityResponse memory response =
-                IClearingHouse(clearingHouse).addLiquidity(
-                    IClearingHouse.AddLiquidityParams({
-                        baseToken: baseToken,
-                        base: base,
-                        quote: quote,
-                        lowerTick: _minTick,
-                        upperTick: _maxTick,
-                        minBase: 0, // TODO add min for slippage
-                        minQuote: 0,
-                        useTakerBalance: false, // this is not activated yet
-                        deadline: block.timestamp
-                    })
-                );
-            require(response.liquidity > 0, "0 liquidity added");
-        }
+        IClearingHouse.AddLiquidityResponse memory response =
+            IClearingHouse(clearingHouse).addLiquidity(
+                IClearingHouse.AddLiquidityParams({
+                    baseToken: baseToken,
+                    base: base,
+                    quote: quote,
+                    lowerTick: _minTick,
+                    upperTick: _maxTick,
+                    minBase: 0, // TODO add min for slippage
+                    minQuote: 0,
+                    useTakerBalance: false, // this is not activated yet
+                    deadline: block.timestamp
+                })
+            );
+        require(response.liquidity > 0, "0 liquidity added");
 
         // calculate shares and mint it
         uint256 shares;
