@@ -82,21 +82,6 @@ contract FungibleVault is ReentrancyGuard, ERC20 {
 
         // TODO rebalance to ?x leverage
 
-        // calculate shares and mint it
-        uint256 shares;
-        uint256 totalSupply = totalSupply();
-        if (totalSupply == 0) {
-            shares = amount;
-        } else {
-            // account value is based on index price
-            int256 accountValue = IVault(vault).getAccountValue(address(this));
-            require(accountValue > 0, "bankrupt");
-
-            // share = amount / account value
-            shares = amount.mulDiv(10**decimals(), uint256(accountValue));
-        }
-        _mint(receiver, shares);
-
         // deposit to perp
         SafeERC20.safeTransferFrom(IERC20(asset), msg.sender, address(this), amount);
         IVault(vault).deposit(address(asset), amount);
@@ -129,6 +114,16 @@ contract FungibleVault is ReentrancyGuard, ERC20 {
             require(response.liquidity > 0, "0 liquidity added");
         }
 
+        // calculate shares and mint it
+        uint256 shares;
+        if (totalSupply() == 0) {
+            shares = amount;
+        } else {
+            // share = amount / account value after liquidity is added
+            shares = amount.mulDiv(10**decimals(), _safeGetAccountValue());
+        }
+        _mint(receiver, shares);
+
         return shares;
     }
 
@@ -137,7 +132,7 @@ contract FungibleVault is ReentrancyGuard, ERC20 {
         address receiver,
         address owner
     ) external nonReentrant returns (uint256) {
-        // ratio = ratios / totalSupply
+        // ratio = shares / totalSupply
         uint256 digits = 10**decimals();
         uint256 ratio = shares.mulDiv(digits, totalSupply());
         require(allowance(owner, msg.sender) >= shares, "redeem amount exceeds allowance");
@@ -163,8 +158,6 @@ contract FungibleVault is ReentrancyGuard, ERC20 {
         );
 
         // close position
-        IAccountBalance accountBalance = IAccountBalance(IClearingHouse(clearingHouse).getAccountBalance());
-        int256 positionSize = accountBalance.getTakerPositionSize(address(this), baseToken);
         IClearingHouse(clearingHouse).closePosition(
             IClearingHouse.ClosePositionParams({
                 baseToken: baseToken,
@@ -176,16 +169,24 @@ contract FungibleVault is ReentrancyGuard, ERC20 {
         );
         // if the position size is too large, taker position will be closed partially
         // TODO make withdraw 2 steps, auction or let keeper close it several times
-        require(accountBalance.getTakerPositionSize(address(this), baseToken) == 0, "position size is too large");
+        address accountBalance = IClearingHouse(clearingHouse).getAccountBalance();
+        require(
+            IAccountBalance(accountBalance).getTakerPositionSize(address(this), baseToken) == 0,
+            "position size is too large"
+        );
 
         // return asset
-        int256 accountValue = IVault(vault).getAccountValue(address(this));
-        require(accountValue > 0, "bankrupt");
-
-        uint256 accountValueOwnedByUser = uint256(accountValue).mulDiv(ratio, digits);
+        uint256 accountValueOwnedByUser = _safeGetAccountValue().mulDiv(ratio, digits);
         IVault(vault).withdraw(asset, accountValueOwnedByUser);
         SafeERC20.safeTransfer(IERC20(asset), receiver, accountValueOwnedByUser);
         return accountValueOwnedByUser;
+    }
+
+    function _safeGetAccountValue() internal view returns (uint256) {
+        // account value is based on index price
+        int256 accountValue = IVault(vault).getAccountValue(address(this));
+        require(accountValue > 0, "bankrupt");
+        return uint256(accountValue);
     }
 
     function _convertTokenDecimals(
